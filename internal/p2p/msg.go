@@ -23,7 +23,22 @@ type Message struct {
 	Payload []byte
 }
 
-func SendMessage(conn net.Conn, msg Message) {
+type MsgManager struct {
+	conn  net.Conn
+	MsgCh chan Message
+}
+
+func NewManager() *MsgManager {
+	return &MsgManager{}
+}
+
+func (m *MsgManager) Init(conn net.Conn, chSize int) {
+	m.conn = conn
+	m.MsgCh = make(chan Message, chSize)
+	go m.ListenMessage()
+}
+
+func (m *MsgManager) SendMessage(msg Message) {
 
 	data, err := json.Marshal(msg)
 	if err != nil {
@@ -32,23 +47,23 @@ func SendMessage(conn net.Conn, msg Message) {
 
 	length := int32(len(data))
 
-	err = binary.Write(conn, binary.BigEndian, length)
+	err = binary.Write(m.conn, binary.BigEndian, length)
 	if err != nil {
 		log.Fatal("[error] failed to send data length")
 	}
 
-	_, err = conn.Write(data)
+	_, err = m.conn.Write(data)
 	if err != nil {
 		log.Fatal("[error] failed to send data")
 	}
 }
 
-func ListenMessage(conn net.Conn, MsgCh chan Message) {
-	defer conn.Close()
+func (m *MsgManager) ListenMessage() {
+	defer m.conn.Close()
 
 	for {
 		var length int32
-		err := binary.Read(conn, binary.BigEndian, &length)
+		err := binary.Read(m.conn, binary.BigEndian, &length)
 		if err != nil {
 			if err == io.EOF {
 				fmt.Println("connection lost")
@@ -60,7 +75,7 @@ func ListenMessage(conn net.Conn, MsgCh chan Message) {
 
 		data := make([]byte, length)
 
-		_, err = io.ReadFull(conn, data)
+		_, err = io.ReadFull(m.conn, data)
 		if err != nil {
 			log.Fatal("[error] failed to read package data")
 			return
@@ -73,27 +88,6 @@ func ListenMessage(conn net.Conn, MsgCh chan Message) {
 			continue
 		}
 
-		MsgCh <- msg
+		m.MsgCh <- msg
 	}
 }
-
-// func HandleConnection(c net.Conn) {
-// 	c.Close()
-
-// }
-
-// func MsgManager(MsgCh chan Message) {
-// 	for msg := range MsgCh {
-// 		if msg.Type == "join" {
-// 			n.Peers = append(n.Peers, conn)
-
-// 			fmt.Printf("[P2P][New msg] Type: %s, Payload %s\n", msg.Type, string(msg.Payload))
-// 			p2p.SendMessage(conn, p2p.Message{Type: "msg", Payload: []byte("successful connection")})
-// 		}
-
-// 		if msg.Type == "echo" {
-
-// 			fmt.Printf("[P2P] Echo\n")
-// 		}
-// 	}
-// }

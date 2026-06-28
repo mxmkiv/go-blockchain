@@ -4,7 +4,10 @@ import (
 	"flag"
 	"fmt"
 
+	"github.com/mxmkiv/go-blockchain/internal/logger"
+	"github.com/mxmkiv/go-blockchain/internal/miner"
 	"github.com/mxmkiv/go-blockchain/internal/node"
+	"github.com/mxmkiv/go-blockchain/internal/p2p"
 )
 
 func main() {
@@ -30,7 +33,12 @@ func main() {
 		fmt.Scan(&ExtrenalIP)
 	}
 
-	n := node.NewNode(*launchMode, 10, 64)
+	// services
+	zapLogger := logger.NewLogger()
+	msgManager := p2p.NewManager()
+	miner := miner.New()
+
+	n := node.NewNode(*launchMode, zapLogger, msgManager, miner, 10, 64)
 	fmt.Println("node created")
 	n.Start()
 	select {}

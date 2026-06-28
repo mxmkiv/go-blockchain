@@ -6,9 +6,11 @@ import (
 	"net"
 	"strings"
 
-	"github.com/mxmkiv/go-blockchain/internal/blockchain"
+	"github.com/mxmkiv/go-blockchain/internal/miner"
+	"github.com/mxmkiv/go-blockchain/internal/model"
 	"github.com/mxmkiv/go-blockchain/internal/p2p"
 	"go.etcd.io/bbolt"
+	"go.uber.org/zap"
 )
 
 // global
@@ -30,10 +32,16 @@ type Node struct {
 
 	Peers []net.Conn // connections to others node
 
+	Logger *zap.Logger
+
+	//services
+	MsgManager *p2p.MsgManager
+	Miner      *miner.Miner
+
 	IsSeedNode  bool
 	AddressList []string // list of node addresses that are already onchain
 
-	Mempool []blockchain.Transaction
+	Mempool []model.Transaction
 	DB      *bbolt.DB // use bbolt as a database for recording blocks and wallet balances on disk
 }
 
@@ -50,7 +58,10 @@ func IsSeedNodeExist(launchMode string) bool {
 	if err != nil {
 		return false
 	}
-	p2p.SendMessage(conn, p2p.Message{Type: "echo"})
+
+	manager := p2p.NewManager()
+	manager.Init(conn, 1)
+	manager.SendMessage(p2p.Message{Type: p2p.MsgEcho})
 	defer conn.Close()
 
 	return true
@@ -79,7 +90,7 @@ func GetAddressForNode(launchMode string) string {
 	return LocalNodeHost + ":" + port
 }
 
-func NewNode(launchMode string, MaxConn int, MemPoolSize int) *Node {
+func NewNode(launchMode string, logger *zap.Logger, msgManager *p2p.MsgManager, miner *miner.Miner, MaxConn int, MemPoolSize int) *Node {
 
 	if launchMode == "global" {
 
@@ -98,7 +109,7 @@ func NewNode(launchMode string, MaxConn int, MemPoolSize int) *Node {
 
 	Node := &Node{
 		MaxNodeConnected: MaxConn,
-		Mempool:          make([]blockchain.Transaction, 0, MemPoolSize),
+		Mempool:          make([]model.Transaction, 0, MemPoolSize),
 		Peers:            make([]net.Conn, 0, MaxConn),
 	}
 
@@ -143,124 +154,4 @@ func NewNode(launchMode string, MaxConn int, MemPoolSize int) *Node {
 
 func (n *Node) Start() {
 
-	// только сервер, задача записать адреса подключившихся нод и отдать список адресов
-	if n.IsSeedNode == true {
-
-		fmt.Println("///////////////// SEED NODE /////////////////")
-
-		// вынести в p2p пакет
-		go func() {
-			listener, err := net.Listen("tcp", ":"+n.NodePort)
-			if err != nil {
-				log.Fatal("[error] failed start tcp server")
-			}
-			defer listener.Close()
-
-			fmt.Printf("tcp server start port ::%s\n", n.NodePort)
-
-			for {
-				if len(n.Peers) < n.MaxNodeConnected {
-					conn, err := listener.Accept()
-					if err != nil {
-						fmt.Println("connection error")
-						continue
-					}
-
-					MsgCh := make(chan p2p.Message, 100)
-					go func() {
-						MsgCh <- p2p.ListenMessage(conn)
-					}()
-
-					// читатель из канала
-					// вынести в MSG manager (кароче что то придумать с импортами)
-					go func() {
-						for msg := range MsgCh {
-							if msg.Type == "join" {
-								n.Peers = append(n.Peers, conn)
-
-								fmt.Printf("[P2P][New msg] Type: %s, Payload: %s\n", msg.Type, string(msg.Payload))
-								p2p.SendMessage(conn, p2p.Message{Type: "msg", Payload: []byte("successful connection")})
-							}
-
-							if msg.Type == "echo" {
-
-								fmt.Printf("[P2P] Echo\n")
-							}
-						}
-
-						fmt.Printf("[P2P] successful connection %d/%d\n", len(n.Peers), n.MaxNodeConnected)
-					}()
-				} else {
-					fmt.Println("[P2P] connection attempt, node is full")
-				}
-			}
-		}()
-	} else {
-
-		// сервер, слушает соединения
-		go func() {
-			listener, err := net.Listen("tcp", ":"+n.NodePort)
-			if err != nil {
-				log.Fatal("[error] failed start tcp server")
-			}
-			defer listener.Close()
-
-			fmt.Printf("tcp server start port ::%s\n", n.NodePort)
-
-			for {
-				if len(n.Peers) < n.MaxNodeConnected {
-					conn, err := listener.Accept()
-					if err != nil {
-						fmt.Println("connection error")
-						continue
-					}
-
-					n.Peers = append(n.Peers, conn)
-					go p2p.ListenMessage(conn)
-
-				} else {
-					fmt.Println("[P2P] connection attempt, node is full")
-				}
-			}
-		}()
-
-		go func() {
-			conn, err := net.Dial("tcp", LocalSeedNodeAddress)
-			if err != nil {
-				log.Fatal("[error] fialed to connect seed node")
-			}
-
-			p2p.SendMessage(conn, p2p.Message{Type: "join", Payload: []byte("accept connection pls")})
-
-			MsgCh := make(chan p2p.Message, 100)
-
-			go func() {
-				MsgCh <- p2p.ListenMessage(conn)
-			}()
-
-			go func() {
-				for msg := range MsgCh {
-					if msg.Type == "join" {
-						n.Peers = append(n.Peers, conn)
-
-						fmt.Printf("[P2P][New msg] Type: %s, Payload: %s\n", msg.Type, string(msg.Payload))
-						p2p.SendMessage(conn, p2p.Message{Type: "msg", Payload: []byte("successful connection")})
-					}
-
-					if msg.Type == "echo" {
-
-						fmt.Printf("[P2P] Echo\n")
-					}
-				}
-
-				fmt.Printf("[P2P] successful connection %d/%d\n", len(n.Peers), n.MaxNodeConnected)
-			}()
-
-		}()
-	}
-
 }
-
-// func ListenNode() {
-
-// }
